@@ -2,16 +2,17 @@
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QPalette, QColor
 from PyQt6.QtWidgets import *
+from PyQt6.QtGui import QPixmap
 
 import numpy as np
+import io
 
-from sympy import sympify, lambdify, solve, solveset, Interval, Eq, latex, sin, cos, Matrix, re
+from sympy import sympify, lambdify, solve, solveset, Interval, Eq, latex, sin, cos, Matrix, re, pi, nsimplify
 from sympy.abc import u, v
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure 
-
 
 # Subclass QMainWindow to customize your application's main window
 class MainWindow(QMainWindow):
@@ -25,10 +26,10 @@ class MainWindow(QMainWindow):
         LabelF1 = QLabel("du/dt")
         LabelF2 = QLabel("dv/dt")
         LabelDensity = QLabel("Density")
-        LabelXmin = QLabel("Xmin")
-        LabelXmax = QLabel("Xmax")
-        LabelYmin = QLabel("Ymin")
-        LabelYmax = QLabel("Ymax")
+        LabelXmin = QLabel("Umin")
+        LabelXmax = QLabel("Umax")
+        LabelYmin = QLabel("Vmin")
+        LabelYmax = QLabel("Vmax")
         LabelNullclines = QLabel("Nullclines")
         LabelEquilibria = QLabel("Equilibria")
 
@@ -44,11 +45,21 @@ class MainWindow(QMainWindow):
         
         #Create input for F1
         self.InputF1 = QLineEdit()
+        #self.InputF1.setText("-u+3*v")
+        #self.InputF1.setText("u*(-2*u-v+180)")
+        #self.InputF1.setText("cos(u)")
         self.InputF1.setText("v-0.5*u")
+        #self.InputF1.setText("sin(u+v)")
+
 
         #Create input for F2
         self.InputF2 = QLineEdit()
+        self.InputF2.setText("-3*v")
+        self.InputF2.setText("v*(-u-2*v+120)")
+        #self.InputF2.setText("cos(v)")
         self.InputF2.setText("sin(u)")
+        #self.InputF2.setText("sin(u+v)")
+        #self.InputF2.setText("v-0.5*u")
 
         #Create input for Xmin, Xmax, Ymin, Ymax
         self.InputXmin = QLineEdit()
@@ -61,7 +72,7 @@ class MainWindow(QMainWindow):
         self.InputYmax.setText("5")
 
         #Create canvas to display plot
-        self.fig, self.ax = plt.subplots()
+        self.fig, self.ax = plt.subplots(figsize=(5,5))
         self.ax.set_xlabel("u")
         self.ax.set_ylabel("v")
         plt.tight_layout()
@@ -75,6 +86,11 @@ class MainWindow(QMainWindow):
         self.Slider.setMinimum(1)
         self.Slider.setMaximum(5)
         self.Slider.setValue(2)
+
+        #Create place to render latex equations
+        self.latexPanel = QLabel(self)
+        self.latex_code = []
+        self.render_latex()
 
         #Set layout
         layout = QGridLayout()
@@ -108,12 +124,50 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.NullclinesCheckbox, 8, 1)
              
         layout.addWidget(PlotButton, 10, 0, 1, 2)
-        layout.addWidget(self.canvas, 0, 2, 10, 1)
+        layout.addWidget(self.canvas, 0, 2, 10, 5)
         layout.addWidget(Toolbar, 10, 2)
+
+        layout.addWidget(self.latexPanel, 0, 7, 10, 3)
 
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
+
+        self.plotColors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown", "tab:pink", "tab:olive", "tab:cyan"] #Add more colors to be sure
+
+    def render_latex(self):
+        # Use matplotlib to create an image from the LaTeX string
+        fig, ax = plt.subplots(figsize=(3,5))
+        yline = 1
+        i = 0
+        for line in self.latex_code:
+            if line == "Equilibria:" or line == "Nullclines:":
+                yline -= 0.05
+                ax.text(0, yline, line, fontsize=12, va="center")
+            else:
+                if "Unstable" in line or "Stable" in line:
+                    line_split = line.split("_")
+                    ax.text(0, yline, f"${line_split[0]}$", fontsize=12, va="center")
+                    ax.text(0.5, yline, line_split[1], fontsize=12, va="center")
+
+                else: 
+                    ax.text(0.1, yline, f"${line}$", fontsize=12, va="center")
+                    ax.text(0, yline-0.02, "\u2022", c=self.plotColors[i], fontsize=16)
+                    i+=1
+            yline -= 0.05
+        ax.axis('off')
+        plt.tight_layout()
+
+        # Save the figure to a buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close(fig)
+
+        # Load the image into QPixmap and display it in the QLabel
+        pixmap = QPixmap()
+        pixmap.loadFromData(buf.getvalue())
+        self.latexPanel.setPixmap(pixmap)
 
     def plot_button(self):
         Xmin = float(self.InputXmin.text())
@@ -150,10 +204,6 @@ class MainWindow(QMainWindow):
         plt.tight_layout()
         self.ax.streamplot(X, Y, U, V, density=self.Slider.value(), color="tab:gray")
 
-
-        plotColors = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple"] #Add more colors to be sure
-
-
         if self.EquilibriaCheckbox.isChecked():
             SolutionSet = []
 
@@ -163,12 +213,24 @@ class MainWindow(QMainWindow):
 
             if F1_sympy.has(cos) or F1_sympy.has(sin):
                 if F2_sympy.has(cos) or F2_sympy.has(sin):
-                    print("double trig functions")
+                    print("Warning, does not find all equilibria!")
+                    sol = solve([F1_sympy, F2_sympy])
+                    if type(sol) is list:
+                        for s in sol:
+                            SolutionSet.append([s[u], s[v]])
+                    else:
+                        SolutionSet.append([sol[u], sol[v]])
                 else:
                     F1_symbols = F1_sympy.free_symbols
                     if len(F1_symbols) == 2:
-                        sol = solveset(F1_sympy, (u,v))
-                        print("How to handle this?")
+                        sol = solve(F1_sympy)
+                        for s in sol:
+                            if u in s:
+                                sol1 = solve(F2_sympy.subs(u, s[u]), v)[0]
+                                SolutionSet.append([s[u].subs(v, sol1), sol1])
+                            else:
+                                sol1 = solve(F2_sympy.subs(v, s[v]))[0]
+                                SolutionSet.append([sol1, s[v].subs(u, sol1)])
                     elif len(F1_symbols) == 1:
                         if u in F1_symbols:
                             sol1 = solveset(F1_sympy, u, domain=Interval(Xmin, Xmax))
@@ -184,31 +246,44 @@ class MainWindow(QMainWindow):
                                     SolutionSet.append([s2, s])
                     else: print("Not interesting")
             elif F2_sympy.has(cos) or F2_sympy.has(sin):
-                if F1_sympy.has(cos) or F1_sympy.has(sin):
-                    print("double trig functions, but now handled by the above")
-                else:
-                    F2_symbols = F2_sympy.free_symbols
-                    if len(F2_symbols) == 2:
-                        sol = solve(F2_sympy, [u,v])
-                        print(sol)
-                        print("How to handle this?")
-                    elif len(F2_symbols) == 1:
-                        if u in F2_symbols:
-                            sol1 = solveset(F2_sympy, u, domain=Interval(Xmin, Xmax))
-                            for s in sol1:
-                                sol = solve(F1_sympy.subs(u, s))
-                                for s2 in sol:
-                                    SolutionSet.append([s, s2])
+                F2_symbols = F2_sympy.free_symbols
+                if len(F2_symbols) == 2:
+                    sol = solve(F2_sympy)
+                    for s in sol:
+                        if u in s:
+                            sol1 = solve(F1_sympy.subs(u, s[u]), v)[0]
+                            SolutionSet.append([s[u].subs(v, sol1), sol1])
                         else:
-                            sol1 = solveset(F2_sympy, v, domain=Interval(Ymin, Ymax))
-                            for s in sol1:
-                                sol = solve(F1_sympy.subs(v, s))
-                                for s2 in sol:
-                                    SolutionSet.append([s2, s])
-                    else: print("Not interesting")
+                            sol1 = solve(F1_sympy.subs(v, s[v]))[0]
+                            SolutionSet.append([sol1, s[v].subs(u, sol1)])
+
+                elif len(F2_symbols) == 1:
+                    if u in F2_symbols:
+                        sol1 = solveset(F2_sympy, u, domain=Interval(Xmin, Xmax))
+                        for s in sol1:
+                            sol = solve(F1_sympy.subs(u, s), v)
+                            for s2 in sol:
+                                SolutionSet.append([s, nsimplify(s2, [pi])])
+                    else:
+                        sol1 = solveset(F2_sympy, v, domain=Interval(Ymin, Ymax))
+                        for s in sol1:
+                            sol = solve(F1_sympy.subs(v, s))
+                            for s2 in sol:
+                                SolutionSet.append([nsimplify(s2, [pi]), s])
+                else: print("Not interesting")
             else:
-                sol = solve([F1_sympy, F2_sympy], [u,v])
-            
+                sol = solve([F1_sympy, F2_sympy])
+                if type(sol) is list:
+                    for s in sol:
+                        SolutionSet.append([s[u], s[v]])
+                else:
+                    SolutionSet.append([sol[u], sol[v]])
+
+            if "Equilibria:" in self.latex_code: lableGen = False
+            else: lableGen = True
+            if lableGen: self.latex_code.append("Equilibria:")
+
+
             for eq in SolutionSet:
                 J_eq = J.subs([(u, eq[0]), (v, eq[1])])
                 ev_J = list(J_eq.eigenvals().keys())
@@ -216,54 +291,80 @@ class MainWindow(QMainWindow):
                 if len(re_ev_J[re_ev_J>0])>0:
                     self.ax.scatter(eq[0], eq[1], marker = 'o', s=50, color="black", zorder=10)
                     self.ax.scatter(eq[0], eq[1], marker = 'o', s=20, color="white", zorder=10)
+                    if lableGen: self.latex_code.append("("+latex(eq[0])+","+latex(eq[1])+")_Unstable")
                 else:
                     self.ax.scatter(eq[0], eq[1], marker = 'o', s=50, color="black", zorder=10)
-
+                    if lableGen: self.latex_code.append("("+latex(eq[0])+","+latex(eq[1])+")_Stable")
 
         if self.NullclinesCheckbox.isChecked():
+            if "Nullclines:" in self.latex_code: lableGen = False
+            else: lableGen = True
+            if lableGen: self.latex_code.append("Nullclines:")
             solCounter = 0
             for F in [F1_sympy, F2_sympy]:
                 F_symbols = F.free_symbols
                 if F.has(cos) or F.has(sin):
                     if len(F_symbols) == 2:
-                        F_sol = solveset(F, v)
+                        print("Warning, does not find all nullclines")
+                        F_sol = solve(F, v)
                         for sol in F_sol:
                             F_sol_num = lambdify(u, sol, "numpy")
-                            self.ax.plot(x, F_sol_num(x), c=plotColors[solCounter], label=r"$v = " + latex(sol) + r"$")
+                            self.ax.plot(x, F_sol_num(x), c=self.plotColors[solCounter])
+                            if lableGen: self.latex_code.append("v = " + latex(sol))
                             solCounter+=1
                     elif len(F_symbols) == 1:
                         if u in F_symbols:
                             F_sol = solveset(F, u, domain=Interval(Xmin, Xmax))
                             for sol in F_sol:
-                                self.ax.vlines(sol, Ymin, Ymax, color=plotColors[solCounter], label=r"$u = " + latex(sol) + r"$")
+                                self.ax.vlines(sol, Ymin, Ymax, color=self.plotColors[solCounter])
+                                if lableGen: self.latex_code.append("u = " + latex(sol))
                                 solCounter+=1
                         else:
                             F_sol = solveset(F, v, domain=Interval(Ymin, Ymax))
                             for sol in F_sol:
-                                self.ax.hlines(sol, Xmin, Xmax, color=plotColors[solCounter], label=r"$v = " + latex(sol) + r"$")
+                                self.ax.hlines(sol, Xmin, Xmax, color=self.plotColors[solCounter])
+                                if lableGen: self.latex_code.append("v = " + latex(sol))
                                 solCounter+=1
                     else: print("Not interesting")
                 else:
                     if len(F_symbols) == 2:
-                        F_sol = solve(F, v)
+                        F_sol = solve(F)
                         for sol in F_sol:
-                            F_sol_num = lambdify(u, sol, "numpy")
-                            self.ax.plot(x, F_sol_num(x), c=plotColors[solCounter], label=r"$v = " + latex(sol) + r"$")
+                            if u in sol:
+                                if sol[u].has(v):
+                                    F_sol_num = lambdify(v, sol[u], "numpy")
+                                    self.ax.plot(F_sol_num(y), y, c=self.plotColors[solCounter])
+                                    if lableGen: self.latex_code.append("u = " + latex(sol[u]))
+                                else:
+                                    self.ax.vlines(sol[u], Ymin, Ymax, color=self.plotColors[solCounter])
+                                    if lableGen: self.latex_code.append("u = " + latex(sol[u]))
+                            else:
+                                if sol[v].has(u):
+                                    F_sol_num = lambdify(u, sol[v], "numpy")
+                                    self.ax.plot(x, F_sol_num(x), c=self.plotColors[solCounter])
+                                    if lableGen: self.latex_code.append("v = " + latex(sol[v]))
+                                else:
+                                    self.ax.hlines(sol[v], Xmin, Xmax, color=self.plotColors[solCounter])
+                                    if lableGen: self.latex_code.append("v = " + latex(sol[v]))
                             solCounter+=1
+
                     elif len(F_symbols) == 1:
                         if u in F_symbols:
                             F_sol = solve(F, u, domain=Interval(Xmin, Xmax))
                             for sol in F_sol:
-                                self.ax.vlines(sol, Ymin, Ymax, color=plotColors[solCounter], label=r"$u = " + latex(sol) + r"$")
+                                self.ax.vlines(sol, Ymin, Ymax, color=self.plotColors[solCounter])
+                                if lableGen: self.latex_code.append("u = " + latex(sol))
                                 solCounter+=1
                         else:
                             F_sol = solve(F, v, domain=Interval(Ymin, Ymax))
                             for sol in F_sol:
-                                self.ax.hlines(sol, Xmin, Xmax, color=plotColors[solCounter], label=r"$v = " + latex(sol) + r"$")
+                                self.ax.hlines(sol, Xmin, Xmax, color=self.plotColors[solCounter])
+                                if lableGen: self.latex_code.append("v = " + latex(sol))
                                 solCounter+=1
                     else: print("Not interesting")
-            self.ax.legend()
         
+        self.render_latex()
+        self.latex_code = []
         self.canvas.draw()
 
 
